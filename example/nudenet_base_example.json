@@ -1,0 +1,98 @@
+{
+  "25": {
+    "inputs": {
+      "model": "nudenet.onnx"
+    },
+    "class_type": "NudenetModelLoader",
+    "_meta": {
+      "title": "Nudenet Model Loader"
+    }
+  },
+  "26": {
+    "inputs": {
+      "censor_method": "image",
+      "min_score": 0.2,
+      "blocks": 10,
+      "overlay_strength": 5,
+      "nudenet_model": [
+        "25",
+        0
+      ],
+      "image": [
+        "27",
+        0
+      ],
+      "filtered_labels": [
+        "34",
+        0
+      ],
+      "overlay_image": [
+        "32",
+        0
+      ]
+    },
+    "class_type": "ApplyNudenet",
+    "_meta": {
+      "title": "Apply Nudenet"
+    }
+  },
+  "27": {
+    "inputs": {
+      "image": "test1.jpg",
+      "upload": "image"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "29": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "26",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "32": {
+    "inputs": {
+      "image": "censored.png",
+      "upload": "image"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "34": {
+    "inputs": {
+      "FEMALE_GENITALIA_COVERED": false,
+      "FACE_FEMALE": false,
+      "BUTTOCKS_EXPOSED": false,
+      "FEMALE_BREAST_EXPOSED": false,
+      "FEMALE_GENITALIA_EXPOSED": true,
+      "MALE_BREAST_EXPOSED": false,
+      "ANUS_EXPOSED": true,
+      "FEET_EXPOSED": false,
+      "BELLY_COVERED": false,
+      "FEET_COVERED": false,
+      "ARMPITS_COVERED": false,
+      "ARMPITS_EXPOSED": false,
+      "FACE_MALE": false,
+      "BELLY_EXPOSED": false,
+      "MALE_GENITALIA_EXPOSED": true,
+      "ANUS_COVERED": false,
+      "FEMALE_BREAST_COVERED": false,
+      "BUTTOCKS_COVERED": false
+    },
+    "class_type": "FilterdLabel",
+    "_meta": {
+      "title": "Filtered Labels"
+    }
+  }
+}

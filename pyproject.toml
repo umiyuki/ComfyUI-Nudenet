@@ -1,0 +1,15 @@
+[project]
+name = "ComfyUI-Nudenet"
+description = "Nodes for NSFW content filtering"
+version = "0.0.1"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/phuvinh010701/ComfyUI-Nudenet"
+
+#  Used by Comfy Registry https://comfyregistry.org
+[tool.comfy]
+PublisherId = "phuvinh010701"
+DisplayName = "ComfyUI-Nudenet"
+Icon = ""
