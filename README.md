@@ -1,3 +1,5 @@
+![Visitor Count](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=Visitors&query=value&url=https://api.countapi.xyz/hit/phuvinh010701.ComfyUI-Nudenet)
+
 # ComfyUI-Nudenet
 
 Nodes for NSFW content filtering. 
