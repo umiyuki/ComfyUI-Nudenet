@@ -318,6 +318,154 @@ class NudenetModelLoader:
                 input_name=self.input_name,
             ),
         )
+    
+class ApplyNudenetBatch:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "nudenet_model": ("NUDENET_MODEL",),
+                "image": ("IMAGE",),  # バッチ入力を想定
+                "censor_method": (CENSOR_METHODS,),
+                "filtered_labels": ("FILTERED_LABELS",),
+                "min_score": (
+                    "FLOAT",
+                    {"default": 0.2, "min": 0.0, "max": 1.0, "step": 0.01},
+                ),
+                "blocks": ("INT", {"default": 3, "min": 1, "max": 100, "step": 1}),
+                "block_count_scaling": (BLOCK_COUNT_BEHAVIOURS, {"tooltip": "Scale block count by censor area. Only affects pixelate censor."}),
+                "inherit_previous_censor": ("BOOLEAN", {"default": False}),
+                # 新しいパラメータを追加
+                "expand_width": (
+                    "INT",
+                    {"default": 0, "min": 0, "max": 1000, "step": 1},
+                ),
+                "expand_height": (
+                    "INT",
+                    {"default": 0, "min": 0, "max": 1000, "step": 1},
+                ),
+            },
+            "optional": {
+                "overlay_image": ("IMAGE",),
+                "overlay_strength": (
+                    "FLOAT",
+                    {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1},
+                ),
+                "alpha_mask": ("MASK",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "apply_nudenet_batch"
+    CATEGORY = "Nudenet"
+
+    def apply_nudenet_batch(
+        self,
+        nudenet_model,
+        image: torch.Tensor,  # バッチ (B, H, W, C) を想定
+        filtered_labels,
+        censor_method,
+        min_score,
+        blocks,
+        block_count_scaling,
+        inherit_previous_censor: bool = False,
+        expand_width: int = 0,  # 新しいパラメータ
+        expand_height: int = 0,  # 新しいパラメータ
+        overlay_image: torch.Tensor = None,
+        overlay_strength: float = 1.0,
+        alpha_mask: torch.Tensor = None,
+    ):
+        if image.dim() != 4:
+            raise ValueError(f"Input image must be a batch (4 dimensions), but got {image.dim()} dimensions.")
+
+        batch_size = image.shape[0]
+        output_images = []
+        previous_censored = None  # 前フレームの検出結果を保持
+
+        # オーバーレイとマスクの処理（変更なし）
+        single_overlay_image = None
+        if overlay_image is not None:
+            if overlay_image.dim() == 4 and overlay_image.shape[0] > 0:
+                single_overlay_image = overlay_image[0:1]
+            else:
+                single_overlay_image = overlay_image
+
+        single_alpha_mask = None
+        if alpha_mask is not None:
+            if alpha_mask.dim() == 3 and alpha_mask.shape[0] > 0:
+                single_alpha_mask = alpha_mask[0:1]
+            elif alpha_mask.dim() == 2:
+                single_alpha_mask = alpha_mask.unsqueeze(0)
+
+        # バッチ内の各画像を処理
+        for i in range(batch_size):
+            single_image_batch = image[i:i+1]
+            img_height, img_width = single_image_batch.shape[1:3]  # 画像のサイズを取得
+
+            # 検出処理
+            preprocessed_image, resize_factor, pad_left, pad_top = read_image(
+                single_image_batch[0].cpu().numpy(), nudenet_model["input_width"]
+            )
+            outputs = nudenet_model["session"].run(
+                None, {nudenet_model["input_name"]: preprocessed_image}
+            )
+            detections = postprocess(outputs, resize_factor, pad_left, pad_top, min_score)
+            censored = [d for d in detections if d.get("id") not in filtered_labels]
+
+            # 検出がない場合、前のフレームの結果を引き継ぐ
+            if inherit_previous_censor and not censored and previous_censored is not None:
+                censored = previous_censored
+
+            # 現在の検出結果を保存
+            previous_censored = censored if censored else previous_censored
+
+            # 画像にセンサーを適用
+            processed_image = single_image_batch.clone()[0].cpu().numpy()  # (H, W, C)
+            if block_count_scaling == "fixed":
+                scaled_blocks = blocks
+
+            for d in censored:
+                box = d["box"]
+                x, y, w, h = box[0], box[1], box[2], box[3]
+
+                # ボックスを拡張
+                x = max(0, x - expand_width)  # 左に拡張
+                y = max(0, y - expand_height)  # 上に拡張
+                w = min(img_width - x, w + 2 * expand_width)  # 幅を拡張
+                h = min(img_height - y, h + 2 * expand_height)  # 高さを拡張
+
+                # 拡張されたボックスを適用
+                area = processed_image[y:y + h, x:x + w]
+
+                if block_count_scaling != "fixed":
+                    d_pct = max(h / processed_image.shape[0], w / processed_image.shape[1])
+                    if block_count_scaling == "fewer_when_large":
+                        scaled_blocks = int(blocks + d_pct * (1 - blocks))
+                    else:  # "fewer_when_small"
+                        scaled_blocks = int(1 + d_pct * (blocks - 1))
+
+                if censor_method == "pixelate":
+                    processed_image[y:y + h, x:x + w] = pixelate(area, blocks=scaled_blocks)
+                elif censor_method == "blur":
+                    processed_image[y:y + h, x:x + w] = cv2.blur(area, (scaled_blocks, scaled_blocks))
+                elif censor_method == "gaussian_blur":
+                    processed_image[y:y + h, x:x + w] = cv2.GaussianBlur(area, (h, h), 0)
+                elif censor_method == "image":
+                    if single_overlay_image is None or single_alpha_mask is None:
+                        raise Exception("Censor Method: image requires both overlay_image and alpha_mask")
+                    overlay_np = single_overlay_image[0].cpu().numpy() if single_overlay_image is not None else None
+                    mask_np = single_alpha_mask[0].cpu().numpy() if single_alpha_mask is not None else None
+                    pasty = cv2.resize(overlay_np, (w, h))
+                    mask_resized = cv2.resize(mask_np, (w, h))
+                    processed_image = overlay(processed_image, pasty, mask_resized, x, y, overlay_strength)
+
+            # 処理済み画像をテンソルに戻してリストに追加
+            processed_image_tensor = torch.from_numpy(processed_image).unsqueeze(0)
+            output_images.append(processed_image_tensor)
+
+        # バッチテンソルに結合
+        final_batch_tensor = torch.cat(output_images, dim=0)
+        return (final_batch_tensor,)
 
 
 """
@@ -328,6 +476,7 @@ class NudenetModelLoader:
 NODE_CLASS_MAPPINGS = {
     # Main Apply Nodes
     "ApplyNudenet": ApplyNudenet,
+    "ApplyNudenetBatch": ApplyNudenetBatch,
     # Loaders
     "NudenetModelLoader": NudenetModelLoader,
     # Helpers
@@ -337,6 +486,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     # Main Apply Nodes
     "ApplyNudenet": "Apply Nudenet",
+    "ApplyNudenetBatch": "Apply Nudenet (Batch)",
     # Loaders
     "NudenetModelLoader": "Nudenet Model Loader",
     # Helpers
